@@ -35,7 +35,11 @@
  */
 //#include <inttypes.h>
 #include <SoftwareSerial.h>
+#include <Wire.h>
 
+#define DEBUG_SERIAL 1
+
+//For FlySkyIBus
 typedef enum _State
 {
     GET_LENGTH,
@@ -65,6 +69,12 @@ typedef struct _FlySkyIBus
 
 FlySkyIBus IBus;
 SoftwareSerial mySerial(10, 11); // RX, TX
+////////////////////////////////////////////////////////
+
+//For MPU6050
+const int MPU_addr=0x68; // I2C address of the MPU-6050
+int16_t AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
+////////////////////////////////////////////////////////
 
 static void Thread_RF_Ibus(void *arg)
 {
@@ -72,6 +82,36 @@ static void Thread_RF_Ibus(void *arg)
   {
     IBus_loop();
 
+    vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
+  }
+}
+
+static void Thread_GY_86(void *arg)
+{
+  while(1)
+  {
+    Wire.beginTransmission(MPU_addr);
+    Wire.write(0x3B); //starting with register 0x3B (ACCEL_XOUT_H)
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_addr,14,true); // request a total of 14 registers
+    AcX=Wire.read()<<8|Wire.read(); // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L) 
+    AcY=Wire.read()<<8|Wire.read(); // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
+    AcZ=Wire.read()<<8|Wire.read(); // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
+    Tmp=Wire.read()<<8|Wire.read(); // 0x41 (TEMP_OUT_H) & 0x42 (TEMP_OUT_L)
+    GyX=Wire.read()<<8|Wire.read(); // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
+    GyY=Wire.read()<<8|Wire.read(); // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
+    GyZ=Wire.read()<<8|Wire.read(); // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
+
+    vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
+  }
+}
+
+static void Thread_Debug(void *arg)
+{
+  while(1)
+  {
+#if DEBUG_SERIAL
+#if 1
     Serial.print("CH[1] : ");
     Serial.print(IBus_readChannel(0), DEC);
     Serial.print(" | ");
@@ -102,22 +142,23 @@ static void Thread_RF_Ibus(void *arg)
     Serial.print("CH[10] : ");
     Serial.print(IBus_readChannel(9), DEC);
     Serial.println("");
-    vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
-  }
-}
-
-static void Thread_GY_86(void *arg)
-{
-  while(1)
-  {
-    Serial.println(F("ACCL [blabla], GYRO [blabla]"));
-    vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
+#else
+    Serial.print("AcX = "); Serial.print(AcX);
+    Serial.print(" | AcY = "); Serial.print(AcY);
+    Serial.print(" | AcZ = "); Serial.print(AcZ);
+    Serial.print(" | Tmp = "); Serial.print(Tmp/340.00+36.53); //equation for temperature in degrees C from datasheet
+    Serial.print(" | GyX = "); Serial.print(GyX);
+    Serial.print(" | GyY = "); Serial.print(GyY);
+    Serial.print(" | GyZ = "); Serial.println(GyZ);
+#endif
+#endif
+    vTaskDelay((500L * configTICK_RATE_HZ) / 1000L); //500ms delay
   }
 }
 
 void setup() 
 {
-  portBASE_TYPE s1, s2;
+  portBASE_TYPE s1, s2, s3;
   /*
    * begin Hardware Serial to display information to debug 
    */
@@ -126,8 +167,18 @@ void setup()
    * begin SoftwareSerial and read data from IBus
    */
   IBus_begin();
+  ////////////////////////////////////////////////////////
+  /*
+   * setup mpu6050
+   */
+  Wire.begin();
+  Wire.beginTransmission(MPU_addr);
+  Wire.write(0x6B);// PWR_MGMT_1 register
+  Wire.write(0);// set to zero (wakes up the MPU-6050)
+  Wire.endTransmission(true);
+  ////////////////////////////////////////////////////////
 
-  s1 = xTaskCreate(Thread_RF_Ibus, "RF_IBUS", configMINIMAL_STACK_SIZE, NULL, 2, NULL); //pririty 2 to test
+  s1 = xTaskCreate(Thread_RF_Ibus, "RF_IBUS", configMINIMAL_STACK_SIZE, NULL, 1, NULL); //pririty 1 to test
   if (s1 != pdPASS)
   {
     Serial.println(F("Failed to create thread of Thread_RF_Ibus"));
@@ -138,6 +189,13 @@ void setup()
   if (s2 != pdPASS)
   {
     Serial.println(F("Failed to create thread of Thread_GY_86"));
+    while(1);
+  }
+
+  s3 = xTaskCreate(Thread_Debug, "DEBUG", configMINIMAL_STACK_SIZE, NULL, 1, NULL); //priority 1 to test
+  if (s3 != pdPASS)
+  {
+    Serial.println(F("Failed to create thread of Thread_Display_TO_DEBUG"));
     while(1);
   }
 
