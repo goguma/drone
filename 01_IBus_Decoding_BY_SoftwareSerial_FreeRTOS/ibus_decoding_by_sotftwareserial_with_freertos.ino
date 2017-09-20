@@ -37,8 +37,9 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
-#define DEBUG_SERIAL 1
-
+#define DEBUG_SERIAL_THREAD 0
+#define DEBUG_IBUS 1
+#define DEBUG_ACC_GYRO 1
 //For FlySkyIBus
 typedef enum _State
 {
@@ -82,36 +83,7 @@ static void Thread_RF_Ibus(void *arg)
   {
     IBus_loop();
 
-    vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
-  }
-}
-
-static void Thread_GY_86(void *arg)
-{
-  while(1)
-  {
-    Wire.beginTransmission(MPU_addr);
-    Wire.write(0x3B); //starting with register 0x3B (ACCEL_XOUT_H)
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU_addr,14,true); // request a total of 14 registers
-    AcX=Wire.read()<<8|Wire.read(); // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L) 
-    AcY=Wire.read()<<8|Wire.read(); // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
-    AcZ=Wire.read()<<8|Wire.read(); // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
-    Tmp=Wire.read()<<8|Wire.read(); // 0x41 (TEMP_OUT_H) & 0x42 (TEMP_OUT_L)
-    GyX=Wire.read()<<8|Wire.read(); // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
-    GyY=Wire.read()<<8|Wire.read(); // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
-    GyZ=Wire.read()<<8|Wire.read(); // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
-
-    vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
-  }
-}
-
-static void Thread_Debug(void *arg)
-{
-  while(1)
-  {
-#if DEBUG_SERIAL
-#if 1
+#if DEBUG_IBUS
     Serial.print("CH[1] : ");
     Serial.print(IBus_readChannel(0), DEC);
     Serial.print(" | ");
@@ -142,7 +114,82 @@ static void Thread_Debug(void *arg)
     Serial.print("CH[10] : ");
     Serial.print(IBus_readChannel(9), DEC);
     Serial.println("");
-#else
+#endif
+
+    //vTaskDelay((100L * configTICK_RATE_HZ) / 1000L); //100ms delay
+    delay(333);
+  }
+}
+
+static void Thread_GY_86(void *arg)
+{
+  while(1)
+  {
+    Wire.beginTransmission(MPU_addr);
+    Wire.write(0x3B); //starting with register 0x3B (ACCEL_XOUT_H)
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_addr,14,true); // request a total of 14 registers
+    AcX=Wire.read()<<8|Wire.read(); // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L) 
+    AcY=Wire.read()<<8|Wire.read(); // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
+    AcZ=Wire.read()<<8|Wire.read(); // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
+    Tmp=Wire.read()<<8|Wire.read(); // 0x41 (TEMP_OUT_H) & 0x42 (TEMP_OUT_L)
+    GyX=Wire.read()<<8|Wire.read(); // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
+    GyY=Wire.read()<<8|Wire.read(); // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
+    GyZ=Wire.read()<<8|Wire.read(); // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
+
+#if DEBUG_ACC_GYRO
+    Serial.print("AcX = "); Serial.print(AcX);
+    Serial.print(" | AcY = "); Serial.print(AcY);
+    Serial.print(" | AcZ = "); Serial.print(AcZ);
+    Serial.print(" | Tmp = "); Serial.print(Tmp/340.00+36.53); //equation for temperature in degrees C from datasheet
+    Serial.print(" | GyX = "); Serial.print(GyX);
+    Serial.print(" | GyY = "); Serial.print(GyY);
+    Serial.print(" | GyZ = "); Serial.println(GyZ);
+#endif
+
+    //vTaskDelay((333L * configTICK_RATE_HZ) / 1000L); //100ms delay
+    delay(333);
+  }
+}
+
+static void Thread_Debug(void *arg)
+{
+  while(1)
+  {
+#if DEBUG_SERIAL_THREAD
+#if DEBUG_IBUS
+    Serial.print("CH[1] : ");
+    Serial.print(IBus_readChannel(0), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[2] : ");
+    Serial.print(IBus_readChannel(1), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[3] : ");
+    Serial.print(IBus_readChannel(2), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[4] : ");
+    Serial.print(IBus_readChannel(3), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[5] : ");
+    Serial.print(IBus_readChannel(4), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[6] : ");
+    Serial.print(IBus_readChannel(5), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[7] : ");
+    Serial.print(IBus_readChannel(6), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[8] : ");
+    Serial.print(IBus_readChannel(7), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[9] : ");
+    Serial.print(IBus_readChannel(8), DEC);
+    Serial.print(" | ");
+    Serial.print("CH[10] : ");
+    Serial.print(IBus_readChannel(9), DEC);
+    Serial.println("");
+#endif
+#if DEBUG_ACC_GYRO
     Serial.print("AcX = "); Serial.print(AcX);
     Serial.print(" | AcY = "); Serial.print(AcY);
     Serial.print(" | AcZ = "); Serial.print(AcZ);
@@ -159,10 +206,7 @@ static void Thread_Debug(void *arg)
 void setup() 
 {
   portBASE_TYPE s1, s2, s3;
-  /*
-   * begin Hardware Serial to display information to debug 
-   */
-  Serial.begin(115200);
+
   /*
    * begin SoftwareSerial and read data from IBus
    */
@@ -178,6 +222,11 @@ void setup()
   Wire.endTransmission(true);
   ////////////////////////////////////////////////////////
 
+  /*
+   * begin Hardware Serial to display information to debug 
+   */
+  Serial.begin(115200);
+  
   s1 = xTaskCreate(Thread_RF_Ibus, "RF_IBUS", configMINIMAL_STACK_SIZE, NULL, 1, NULL); //pririty 1 to test
   if (s1 != pdPASS)
   {
@@ -185,19 +234,19 @@ void setup()
     while(1);
   }
 
-  s2 = xTaskCreate(Thread_GY_86, "ACCL_GYRO", configMINIMAL_STACK_SIZE, NULL, 1, NULL); //priority 1 to test
+  s2 = xTaskCreate(Thread_GY_86, "ACCL_GYRO", configMINIMAL_STACK_SIZE * 2, NULL, 1, NULL); //priority 1 to test
   if (s2 != pdPASS)
   {
     Serial.println(F("Failed to create thread of Thread_GY_86"));
     while(1);
   }
 
-  s3 = xTaskCreate(Thread_Debug, "DEBUG", configMINIMAL_STACK_SIZE, NULL, 1, NULL); //priority 1 to test
-  if (s3 != pdPASS)
-  {
-    Serial.println(F("Failed to create thread of Thread_Display_TO_DEBUG"));
-    while(1);
-  }
+  //s3 = xTaskCreate(Thread_Debug, "DEBUG", configMINIMAL_STACK_SIZE, NULL, 1, NULL); //priority 1 to test
+  //if (s3 != pdPASS)
+  //{
+  //  Serial.println(F("Failed to create thread of Thread_Display_TO_DEBUG"));
+  //  while(1);
+  //}
 
   vTaskStartScheduler();
   Serial.println(F("Insufficient RAM"));
