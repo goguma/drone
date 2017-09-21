@@ -23,11 +23,11 @@
 
 #define USE_SOFTWARE_SERIAL 1 // 1: Arduino Uno, 0 : Arduino Pro Micro
 
-#define DEBUG_IBUS 0
+#define DEBUG_IBUS 1
 #define DEBUG_ACC_GYRO 0
 #define DEBUG_PROCESSING 0
-#define DEBUG_I6X 1
-#define DEBUG_ESC_MOTOR_SPEED 1
+#define DEBUG_I6X 0
+#define DEBUG_ESC_MOTOR_SPEED 0
 
 #if (DEBUG_IBUS || DEBUG_ACC_GYRO || DEBUG_PROCESSING || DEBUG_I6X || DEBUG_ESC_MOTOR_SPEED)
   #define DEBUG_SERIAL 1
@@ -58,6 +58,7 @@ typedef struct _FlySkyIBus
   uint16_t channel[PROTOCOL_CHANNELS];
   uint16_t chksum;
   uint8_t lchksum;
+  int calibration_mode;
 }FlySkyIBus;
 
 typedef struct _i6X
@@ -175,6 +176,13 @@ void setup()
    * begin SoftwareSerial and read data from IBus
    */
   IBus_begin();
+
+  if(IBus.calibration_mode == 1)
+  {
+    Do_ESC_Calibration();
+    IBus.calibration_mode = 0;
+    return;
+  }
 
   /*
    * setup mpu6050
@@ -530,6 +538,13 @@ static void IBus_begin(void)
   IBus.len = 0;
   IBus.chksum = 0;
   IBus.lchksum = 0;
+
+  /* Check calibration Mode */
+  IBus_loop();
+  if ((IBus.channel[2] >= 1990) && (IBus.channel[9] == 2000))
+  {
+    IBus.calibration_mode = 1;
+  }
 }
 
 static void IBus_loop(void)
@@ -812,5 +827,43 @@ static void Do_ESC_Calibration(void)
    * https://www.youtube.com/watch?v=DHDOAocEpqU
    */
 
+  Serial.println("Start ESC Calibration MODE, Wait!!!");
+  
+  esc.MotorA_ESC.attach(MOTOR_A_PIN);
+  esc.MotorB_ESC.attach(MOTOR_B_PIN);
+  esc.MotorC_ESC.attach(MOTOR_C_PIN);
+  esc.MotorD_ESC.attach(MOTOR_D_PIN);
+  delay(5000);
+
+  /*HI*/
+  Serial.println("MAX throttle, 180 (Servo)!!!");
+  esc.MotorA_ESC.write(180);
+  esc.MotorB_ESC.write(180); 
+  esc.MotorC_ESC.write(180); 
+  esc.MotorD_ESC.write(180);
+  delay(5000);
+
+  /*LOW*/
+  Serial.println("MIN throttle, 0 (Servo)!!!");
+  esc.MotorA_ESC.write(0);
+  esc.MotorB_ESC.write(0); 
+  esc.MotorC_ESC.write(0); 
+  esc.MotorD_ESC.write(0);
+  delay(5000);
+
+  /*MID*/
+  Serial.println("MID throttle, 90 (Servo)!!!");
+  esc.MotorA_ESC.write(90);
+  esc.MotorB_ESC.write(90); 
+  esc.MotorC_ESC.write(90); 
+  esc.MotorD_ESC.write(90);
+  delay(10000);
+
+  /*SPEED*/
+  esc.MotorA_ESC.write(10);
+  esc.MotorB_ESC.write(10); 
+  esc.MotorC_ESC.write(10); 
+  esc.MotorD_ESC.write(10);
+  Serial.println("Finished!!!, Restart Your Arduino");
 }
  ////////////////////////////////////////////////////////////////////////////
