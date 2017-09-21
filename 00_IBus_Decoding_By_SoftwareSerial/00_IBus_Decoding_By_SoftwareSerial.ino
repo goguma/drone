@@ -20,10 +20,14 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
+#define USE_SOFTWARE_SERIAL 1 // 1: Arduino Uno, 0 : Arduino Pro Micro
+
 #define DEBUG_SERIAL 1
-#define DEBUG_IBUS 1
+#define DEBUG_IBUS 0
 #define DEBUG_ACC_GYRO 0
 #define DEBUG_PROCESSING 0
+#define DEBUG_I6X 1
+#define DEBUG_ESC_MOTOR_SPEED 1
 
 typedef enum _State
 {
@@ -71,8 +75,8 @@ typedef struct _LittleBee_ESC
   float MotorA_Speed;
   float MotorB_Speed;
   float MotorC_Speed;
-  float MoterD_Speed;
-}little_esc_20a;
+  float MotorD_Speed;
+}littlebee_esc_20a;
 
 typedef struct _GY86
 {
@@ -125,7 +129,16 @@ typedef struct _PID
   float output;
 }PID;
 
-SoftwareSerial mySerial(10, 11); // RX, TX
+#define MOTOR_A_PIN 9
+#define MOTOR_B_PIN 6
+#define MOTOR_C_PIN 5
+#define MOTOR_D_PIN 3
+
+#if USE_SOFTWARE_SERIAL
+#define SOFTWARE_SERIAL_RX_PIN 10
+#define SOFTWARE_SERIAL_TX_PIN 11
+SoftwareSerial mySerial(SOFTWARE_SERIAL_RX_PIN, SOFTWARE_SERIAL_TX_PIN); // RX, TX
+#endif
 
 FlySkyIBus IBus;
 i6x_Mode2 i6x;
@@ -135,6 +148,7 @@ ACCEL_GYRO accel_gyro;
 unsigned long t_now, t_prev;
 
 PID roll_pid, pitch_pid, yaw_pid;
+littlebee_esc_20a esc;
 
 ////////////////////////////////////////////////////////////////////////////
 /*
@@ -174,13 +188,21 @@ void setup()
    * Initialize YPR
    */
   Init_YPR();
+
+  /*
+   * Initialize ESC throttle for Motor
+   */
+  Init_Motor_Speed();
 }
 
 void loop() 
 {
   GET_YPR();
-  IBus_loop();
   Get_DualPID_from_YPR();
+
+  Get_Motor_Speed_from_PID();
+  Get_i6x_from_IBus();
+  Apply_Motor_Speed_To_ESC();
 
 #if DEBUG_IBUS
   print_ibus();
@@ -199,6 +221,14 @@ void loop()
 #if DEBUG_ACC_GYRO
   print_accel_gyro_raw();
   delay(333);
+#endif
+
+#if DEBUG_I6X
+  print_i6x_input();
+#endif
+
+#if DEBUG_ESC_MOTOR_SPEED
+  print_esc_motor_speed();
 #endif
 
 }
@@ -275,6 +305,51 @@ static void SendDataToProcessing() {
   Serial.print(accel_gyro.Filtered_Angle_Z, 2);
   Serial.println(F(""));
   delay(5);  
+}
+
+static void print_i6x_input(void)
+{     
+  Serial.print("R:");
+  Serial.print(i6x.aileron);
+  Serial.print('\t');
+  Serial.print("P:");
+  Serial.print(i6x.elevator);
+  Serial.print('\t');
+  Serial.print("Y:");
+  Serial.print(i6x.rudder);
+  Serial.print('\t');
+  Serial.print("T:");
+  Serial.print(i6x.throttle);
+  Serial.print('\t');
+  Serial.print("VrA:");
+  Serial.print(i6x.VrA);
+  Serial.print('\t');
+  Serial.print("VrB:");
+  Serial.print(i6x.VrB);
+  Serial.print('\t');
+  Serial.print("SWA/B/C/D:");
+  Serial.print(i6x.SWA);
+  Serial.print(" ");
+  Serial.print(i6x.SWB);
+  Serial.print(" ");
+  Serial.print(i6x.SWC);
+  Serial.print(" ");
+  Serial.println(i6x.SWD);
+}
+
+static void print_esc_motor_speed(void)
+{
+  Serial.print("MotorA:");
+  Serial.print(esc.MotorA_Speed);
+  Serial.print('\t');
+  Serial.print("MotorB:");
+  Serial.print(esc.MotorB_Speed);
+  Serial.print('\t');
+  Serial.print("MotorC:");
+  Serial.print(esc.MotorC_Speed);
+  Serial.print('\t');
+  Serial.print("MotorD:");
+  Serial.println(esc.MotorD_Speed);
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -435,7 +510,11 @@ static void GET_YPR(void)
 
 static void IBus_begin(void)
 {
-  mySerial.begin(115200);
+#if USE_SOFTWARE_SERIAL
+  mySerial.begin(115200); //For Arduino Uno
+#else
+  Serial1.begin(115200); //For Arduino Pro Micro
+#endif
 
   IBus.state = DISCARD;
   IBus.last = millis();
@@ -542,6 +621,8 @@ static void Get_i6x_from_IBus(void)
   ch 3 : left stick left right -> rudder //기체회전
   ch 4 , ch 5 : 1000 ~ 2000
 */
+  IBus_loop();
+
   i6x.aileron = map(IBus.channel[0], 1000, 2000, 0, 255);
   i6x.elevator = map(IBus.channel[1], 1000, 2000, 0, 255);
   i6x.throttle = map(IBus.channel[2], 1000, 2000, 0, 255);
@@ -550,7 +631,7 @@ static void Get_i6x_from_IBus(void)
   i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 255);
   i6x.SWA = map(IBus.channel[6], 1000, 2000, 0, 1);
   i6x.SWB = map(IBus.channel[7], 1000, 2000, 0, 1);
-  i6x.SWC = map(IBus.channel[8], 1000, 2000, 0, 1);
+  i6x.SWC = map(IBus.channel[8], 1000, 2000, 0, 2);
   i6x.SWD = map(IBus.channel[9], 1000, 2000, 0, 1);
 }
 
@@ -635,5 +716,41 @@ static void Get_DualPID_from_YPR()
  /*
  * 6. ESC Part
  */
+
+static void Get_Motor_Speed_from_PID(void)
+{
+  esc.MotorA_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle + yaw_pid.output + roll_pid.output + pitch_pid.output);
+  esc.MotorB_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle - yaw_pid.output - roll_pid.output + pitch_pid.output);
+  esc.MotorC_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle + yaw_pid.output - roll_pid.output - pitch_pid.output);
+  esc.MotorD_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle - yaw_pid.output + roll_pid.output - pitch_pid.output);
+    
+  if(esc.MotorA_Speed < 0) esc.MotorA_Speed = 0; 
+  if(esc.MotorA_Speed > 255) esc.MotorA_Speed = 255;
+  if(esc.MotorB_Speed < 0) esc.MotorB_Speed = 0; 
+  if(esc.MotorB_Speed > 255) esc.MotorB_Speed = 255;
+  if(esc.MotorC_Speed < 0) esc.MotorC_Speed = 0; 
+  if(esc.MotorC_Speed > 255) esc.MotorC_Speed = 255;
+  if(esc.MotorD_Speed < 0) esc.MotorD_Speed = 0; 
+  if(esc.MotorD_Speed > 255) esc.MotorD_Speed = 255;
+}
+
+#define THROTTLE_MAX 255
+#define THROTTLE_MIN 0
+
+static void Init_Motor_Speed(void)
+{
+  analogWrite(MOTOR_A_PIN, THROTTLE_MIN);
+  analogWrite(MOTOR_B_PIN, THROTTLE_MIN);
+  analogWrite(MOTOR_C_PIN, THROTTLE_MIN);
+  analogWrite(MOTOR_D_PIN, THROTTLE_MIN);
+}
+
+static void Apply_Motor_Speed_To_ESC(void)
+{  
+  analogWrite(MOTOR_A_PIN, esc.MotorA_Speed);
+  analogWrite(MOTOR_B_PIN, esc.MotorB_Speed);
+  analogWrite(MOTOR_C_PIN, esc.MotorC_Speed);
+  analogWrite(MOTOR_D_PIN, esc.MotorD_Speed);
+}
 
  ////////////////////////////////////////////////////////////////////////////
