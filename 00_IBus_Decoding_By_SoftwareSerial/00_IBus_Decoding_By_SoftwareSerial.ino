@@ -20,7 +20,8 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
-#define DEBUG_IBUS 0
+#define DEBUG_SERIAL 1
+#define DEBUG_IBUS 1
 #define DEBUG_ACC_GYRO 0
 #define DEBUG_PROCESSING 0
 
@@ -50,6 +51,28 @@ typedef struct _FlySkyIBus
   uint16_t chksum;
   uint8_t lchksum;
 }FlySkyIBus;
+
+typedef struct _i6X
+{
+  float throttle; // left stick, top and down
+  float rudder; //left stick, left and right, yaw ?
+  float elevator; //right stick, top and down, pitch ?
+  float aileron; //right stick, left and right, roll ?
+  float VrA;
+  float VrB;
+  int SWA;
+  int SWB;
+  int SWC;
+  int SWD;
+}i6x_Mode2;
+
+typedef struct _LittleBee_ESC
+{
+  float MotorA_Speed;
+  float MotorB_Speed;
+  float MotorC_Speed;
+  float MoterD_Speed;
+}little_esc_20a;
 
 typedef struct _GY86
 {
@@ -87,44 +110,82 @@ typedef struct _ACCEL_GYRO
   float gyro_z;
 }ACCEL_GYRO;
 
-FlySkyIBus IBus;
+typedef struct _PID
+{
+  float base_target_angle = 0.0;
+  float target_angle = 0.0;
+  float angle_in;
+  float rate_in;
+  float stabilize_kp = 1;
+  float stabilize_ki = 0;
+  float rate_kp = 1;
+  float rate_ki = 0;
+  float stabilize_iterm;
+  float rate_iterm;
+  float output;
+}PID;
+
 SoftwareSerial mySerial(10, 11); // RX, TX
+
+FlySkyIBus IBus;
+i6x_Mode2 i6x;
+
 GY86 gy86_raw;
 ACCEL_GYRO accel_gyro;
 unsigned long t_now, t_prev;
 
+PID roll_pid, pitch_pid, yaw_pid;
+
+////////////////////////////////////////////////////////////////////////////
+/*
+ * 1. Core Part
+ */
+
 void setup() 
 {
+#if DEBUG_SERIAL
   /*
    * begin Hardware Serial to display information to debug 
    */
   Serial.begin(115200);
+#endif
   /*
    * begin SoftwareSerial and read data from IBus
    */
   IBus_begin();
-  ////////////////////////////////////////////////////////
+
   /*
    * setup mpu6050
    */
   GY86_begin();
   GY86_Calibration();
-  ////////////////////////////////////////////////////////
+
   /*
    * to get dt
    */
   startDT();
+
+  /*
+   * Initialize Dual PID
+   */
+  Init_DualPID();
+
+  /*
+   * Initialize YPR
+   */
+  Init_YPR();
 }
 
 void loop() 
 {
+  GET_YPR();
   IBus_loop();
-  GY86_ReadData();
-  endDT();
-  GY86_ACCEL_YPR();
-  GY86_GYRO_YPR();
-  GY86_FILTERED_YPR();
-  
+  Get_DualPID_from_YPR();
+
+#if DEBUG_IBUS
+  print_ibus();
+#endif
+
 #if DEBUG_PROCESSING
   static int cnt = 0;
   cnt++;
@@ -141,6 +202,10 @@ void loop()
 #endif
 
 }
+////////////////////////////////////////////////////////////////////////////
+/*
+ * 2. Debug Part
+ */
 
 static void print_ibus(void)
 {
@@ -212,6 +277,11 @@ static void SendDataToProcessing() {
   delay(5);  
 }
 
+////////////////////////////////////////////////////////////////////////////
+/*
+ * 3. MPU6050 Part
+ */
+
 static void startDT()
 {
   t_prev = micros();
@@ -224,8 +294,6 @@ static void endDT()
   t_prev = t_now;
 }
 
-
-
 static void GY86_begin(void)
 {
   /*
@@ -236,7 +304,6 @@ static void GY86_begin(void)
    Wire.write(0x6B);// PWR_MGMT_1 register
    Wire.write(0);// set to zero (wakes up the MPU-6050)
    Wire.endTransmission(true);
-   ////////////////////////////////////////////////////////
 }
 
 static void GY86_Calibration(void)
@@ -323,12 +390,48 @@ static void GY86_FILTERED_YPR(void)
   tmp_angle_y = accel_gyro.Filtered_Angle_Y + accel_gyro.gyro_y * accel_gyro.dt;
   tmp_angle_z = accel_gyro.Filtered_Angle_Z + accel_gyro.gyro_z * accel_gyro.dt;
   
-  accel_gyro.Filtered_Angle_X = 
-    ALPHA * tmp_angle_x + (1.0-ALPHA) * accel_gyro.Accl_Angle_X;    
-  accel_gyro.Filtered_Angle_Y = 
-    ALPHA * tmp_angle_y + (1.0-ALPHA) * accel_gyro.Accl_Angle_Y;    
+  accel_gyro.Filtered_Angle_X = ALPHA * tmp_angle_x + (1.0-ALPHA) * accel_gyro.Accl_Angle_X;    
+  accel_gyro.Filtered_Angle_Y = ALPHA * tmp_angle_y + (1.0-ALPHA) * accel_gyro.Accl_Angle_Y;    
   accel_gyro.Filtered_Angle_Z = tmp_angle_z;
 }
+static void Init_YPR(void)
+{
+  int i;
+
+  for(i = 0; i < 10; i++)
+  {
+    GET_YPR();
+  
+    roll_pid.base_target_angle += accel_gyro.Filtered_Angle_Y;  
+    pitch_pid.base_target_angle += accel_gyro.Filtered_Angle_X;  
+    yaw_pid.base_target_angle += accel_gyro.Filtered_Angle_Z;
+
+    delay(100);
+  }
+  
+  /* Get Average */
+  roll_pid.base_target_angle /= 10;
+  pitch_pid.base_target_angle /= 10;
+  yaw_pid.base_target_angle /= 10;
+  
+  roll_pid.target_angle = roll_pid.base_target_angle;
+  pitch_pid.target_angle = pitch_pid.base_target_angle;
+  yaw_pid.target_angle = yaw_pid.base_target_angle;
+}
+
+static void GET_YPR(void)
+{
+  GY86_ReadData();
+  endDT();
+  GY86_ACCEL_YPR();
+  GY86_GYRO_YPR();
+  GY86_FILTERED_YPR();
+}
+
+////////////////////////////////////////////////////////////////////////////
+/*
+ * 4. FlySky IBus Part
+ */
 
 static void IBus_begin(void)
 {
@@ -424,3 +527,113 @@ static uint16_t IBus_readChannel(uint8_t channelNr)
     return 0;
   }
 }
+
+static void Get_i6x_from_IBus(void)
+{
+/*
+  float throttle; // left stick, top and down
+  float rudder; //left stick, left and right, yaw ?
+  float elevator; //right stick, top and down, pitch ?
+  float aileron; //right stick, left and right, roll ?
+
+  ch 0 : right stick left right -> Aileron //좌우
+  ch 1 : right stick top down -> Elevator //앞뒤
+  ch 2 Throttle
+  ch 3 : left stick left right -> rudder //기체회전
+  ch 4 , ch 5 : 1000 ~ 2000
+*/
+  i6x.aileron = map(IBus.channel[0], 1000, 2000, 0, 255);
+  i6x.elevator = map(IBus.channel[1], 1000, 2000, 0, 255);
+  i6x.throttle = map(IBus.channel[2], 1000, 2000, 0, 255);
+  i6x.rudder = map(IBus.channel[3], 1000, 2000, 0, 255);
+  i6x.VrA = map(IBus.channel[4], 1000, 2000, 0, 255);
+  i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 255);
+  i6x.SWA = map(IBus.channel[6], 1000, 2000, 0, 1);
+  i6x.SWB = map(IBus.channel[7], 1000, 2000, 0, 1);
+  i6x.SWC = map(IBus.channel[8], 1000, 2000, 0, 1);
+  i6x.SWD = map(IBus.channel[9], 1000, 2000, 0, 1);
+}
+
+////////////////////////////////////////////////////////////////////////////
+/*
+ * 5. PID Part
+ */
+static void Init_DualPID(void)
+{
+  roll_pid.target_angle = pitch_pid.target_angle = yaw_pid.target_angle = 0.0;
+  roll_pid.stabilize_kp = pitch_pid.stabilize_kp = yaw_pid.stabilize_kp = 1;
+  roll_pid.rate_kp = pitch_pid.rate_kp = yaw_pid.rate_kp = 1;
+}
+
+static void GetDualPID(float target_angle, float angle_in, float rate_in,
+            float stabilize_kp, float stabilize_ki,
+            float rate_kp, float rate_ki,
+            float& stabilize_iterm, float& rate_iterm, float& output)
+{
+  float angle_error;
+  float desired_rate;
+  float rate_error;
+  float stabilize_pterm, rate_pterm;  
+
+  angle_error = target_angle - angle_in; 
+
+  stabilize_pterm  = stabilize_kp * angle_error;
+  stabilize_iterm += stabilize_ki * angle_error * accel_gyro.dt;
+
+  desired_rate = stabilize_pterm;
+
+  rate_error = desired_rate - rate_in;
+
+  rate_pterm  = rate_kp * rate_error;
+  rate_iterm += rate_ki * rate_error * accel_gyro.dt;  
+
+  output = rate_pterm + rate_iterm + stabilize_iterm;
+}
+
+static void Get_DualPID_from_YPR()
+{
+  roll_pid.angle_in = accel_gyro.Filtered_Angle_Y;
+  roll_pid.rate_in = accel_gyro.gyro_y;
+  GetDualPID(roll_pid.target_angle,
+    roll_pid.angle_in,
+    roll_pid.rate_in,
+    roll_pid.stabilize_kp, 
+    roll_pid.stabilize_ki,
+    roll_pid.rate_kp,
+    roll_pid.rate_ki, 
+    roll_pid.stabilize_iterm,
+    roll_pid.rate_iterm,
+    roll_pid.output);
+    
+  pitch_pid.angle_in = accel_gyro.Filtered_Angle_X;
+  pitch_pid.rate_in = accel_gyro.gyro_x;            
+  GetDualPID(pitch_pid.target_angle,
+    pitch_pid.angle_in,
+    pitch_pid.rate_in,
+    pitch_pid.stabilize_kp, 
+    pitch_pid.stabilize_ki,
+    pitch_pid.rate_kp,
+    pitch_pid.rate_ki, 
+    pitch_pid.stabilize_iterm,
+    pitch_pid.rate_iterm,
+    pitch_pid.output);
+    
+  yaw_pid.angle_in = accel_gyro.Filtered_Angle_Z;
+  yaw_pid.rate_in = accel_gyro.gyro_z;
+  GetDualPID(yaw_pid.target_angle,
+    yaw_pid.angle_in,
+    yaw_pid.rate_in,
+    yaw_pid.stabilize_kp, 
+    yaw_pid.stabilize_ki,
+    yaw_pid.rate_kp,
+    yaw_pid.rate_ki, 
+    yaw_pid.stabilize_iterm,
+    yaw_pid.rate_iterm,
+    yaw_pid.output);
+}
+ ////////////////////////////////////////////////////////////////////////////
+ /*
+ * 6. ESC Part
+ */
+
+ ////////////////////////////////////////////////////////////////////////////
