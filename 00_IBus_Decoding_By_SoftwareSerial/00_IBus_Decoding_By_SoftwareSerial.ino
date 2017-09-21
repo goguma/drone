@@ -23,13 +23,15 @@
 
 #define USE_SOFTWARE_SERIAL 1 // 1: Arduino Uno, 0 : Arduino Pro Micro
 
-#define DEBUG_IBUS 1
+#define DEBUG_IBUS 0
 #define DEBUG_ACC_GYRO 0
 #define DEBUG_PROCESSING 0
 #define DEBUG_I6X 0
 #define DEBUG_ESC_MOTOR_SPEED 0
+#define DEBUG_TARGET_ANGLE 0
+#define DEBUG_HOVERING 0
 
-#if (DEBUG_IBUS || DEBUG_ACC_GYRO || DEBUG_PROCESSING || DEBUG_I6X || DEBUG_ESC_MOTOR_SPEED)
+#if (DEBUG_IBUS || DEBUG_ACC_GYRO || DEBUG_PROCESSING || DEBUG_I6X || DEBUG_ESC_MOTOR_SPEED || DEBUG_TARGET_ANGLE || DEBUG_HOVERING)
   #define DEBUG_SERIAL 1
 #endif
 
@@ -73,6 +75,12 @@ typedef struct _i6X
   int SWB;
   int SWC;
   int SWD;
+  struct _Hover
+  {
+    float throttle_prev;
+    float aileron_prev; //roll_prev
+    float elevator_prev; //pitch_prev
+  }Hover;
 }i6x_Mode2;
 
 typedef struct _LittleBee_ESC
@@ -159,6 +167,8 @@ unsigned long t_now, t_prev;
 PID roll_pid, pitch_pid, yaw_pid;
 littlebee_esc_20a esc;
 
+int serial_enabled;
+
 ////////////////////////////////////////////////////////////////////////////
 /*
  * 1. Core Part
@@ -171,6 +181,7 @@ void setup()
    * begin Hardware Serial to display information to debug 
    */
   Serial.begin(115200);
+  serial_enabled = 1;
 #endif
   /*
    * begin SoftwareSerial and read data from IBus
@@ -218,6 +229,7 @@ void loop()
 
   Get_Motor_Speed_from_PID();
   Get_i6x_from_IBus();
+  Get_Target_Angle_from_i6x();
   Apply_Motor_Speed_To_ESC();
 
 #if DEBUG_IBUS
@@ -366,6 +378,20 @@ static void print_esc_motor_speed(void)
   Serial.print('\t');
   Serial.print("MotorD:");
   Serial.println(esc.MotorD_Speed);
+}
+
+static void print_target_angle(void)
+{
+  Serial.print("Roll Target Angle:");
+  Serial.print(roll_pid.target_angle);
+  Serial.print('\t');
+
+  Serial.print("Pitch Target Angle:");
+  Serial.print(pitch_pid.target_angle);
+  Serial.print('\t');
+
+  Serial.print("Yaw Target Angle:");
+  Serial.println(yaw_pid.target_angle);
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -526,6 +552,8 @@ static void GET_YPR(void)
 
 static void IBus_begin(void)
 {
+  int cnt = 0;
+
 #if USE_SOFTWARE_SERIAL
   mySerial.begin(115200); //For Arduino Uno
 #else
@@ -540,11 +568,25 @@ static void IBus_begin(void)
   IBus.lchksum = 0;
 
   /* Check calibration Mode */
-  IBus_loop();
-  if ((IBus.channel[2] >= 1990) && (IBus.channel[9] == 2000))
+  while(1)
   {
-    IBus.calibration_mode = 1;
+    if (cnt == 10)
+      break;
+
+    IBus_loop();
+
+    /* If Throttle is MAX and SWD is Down then Go to Calibration Mode */
+    if ((IBus.channel[2] >= 1990) && (IBus.channel[9] == 2000))
+    {
+      IBus.calibration_mode = 1;
+      break;
+    }
+    else
+      cnt++;
+
+    delay(100);
   }
+
 }
 
 static void IBus_loop(void)
@@ -638,24 +680,90 @@ static void Get_i6x_from_IBus(void)
   float elevator; //right stick, top and down, pitch ?
   float aileron; //right stick, left and right, roll ?
 
-  ch 0 : right stick left right -> Aileron //좌우
-  ch 1 : right stick top down -> Elevator //앞뒤
+  ch 0 : right stick left right -> Aileron //좌우, roll
+  ch 1 : right stick top down -> Elevator //앞뒤, pitch
   ch 2 Throttle
-  ch 3 : left stick left right -> rudder //기체회전
+  ch 3 : left stick left right -> rudder //기체회전, yaw
   ch 4 , ch 5 : 1000 ~ 2000
 */
   IBus_loop();
 
-  i6x.aileron = map(IBus.channel[0], 1000, 2000, 0, 255);
-  i6x.elevator = map(IBus.channel[1], 1000, 2000, 0, 255);
-  i6x.throttle = map(IBus.channel[2], 1000, 2000, 0, 255);
-  i6x.rudder = map(IBus.channel[3], 1000, 2000, 0, 255);
-  i6x.VrA = map(IBus.channel[4], 1000, 2000, 0, 255);
-  i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 255);
+  i6x.aileron = map(IBus.channel[0], 1000, 2000, 0, 250); //roll
+  i6x.elevator = map(IBus.channel[1], 1000, 2000, 0, 250); //pitch
+  i6x.throttle = map(IBus.channel[2], 1000, 2000, 0, 250); //throttle
+  i6x.rudder = map(IBus.channel[3], 1000, 2000, 0, 250); //yaw
+  i6x.VrA = map(IBus.channel[4], 1000, 2000, 0, 250);
+  i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 250);
   i6x.SWA = map(IBus.channel[6], 1000, 2000, 0, 1);
   i6x.SWB = map(IBus.channel[7], 1000, 2000, 0, 1);
   i6x.SWC = map(IBus.channel[8], 1000, 2000, 0, 2);
   i6x.SWD = map(IBus.channel[9], 1000, 2000, 0, 1);
+
+}
+
+static void Get_Target_Angle_from_i6x(void)
+{
+  float throttle_now, roll_now, pitch_now;
+
+  roll_pid.target_angle = roll_pid.base_target_angle;
+  pitch_pid.target_angle = pitch_pid.base_target_angle;
+  yaw_pid.target_angle = yaw_pid.base_target_angle;
+
+  roll_pid.target_angle += i6x.aileron-125;
+  pitch_pid.target_angle +=-(i6x.elevator-125);
+  yaw_pid.target_angle += -(i6x.rudder-125);
+
+#if DEBUG_TARGET_ANGLE
+  print_target_angle();
+#endif
+
+  /*
+   * Smart throttle, roll, pitch
+   * This will be support hovering !!!
+   */
+#define THROTTLE_CHANGE 10
+#define ROLL_CHANGE 10
+#define PITCH_CHANGE 10
+
+  /* If SWD is Down then Hovering mode will be enabled */
+  if (IBus.channel[9] == 2000)
+  {
+#if DEBUG_HOVERING
+    Serial.println("Hovering Mode enabled");
+#endif
+    /* throttle */
+    if (i6x.throttle <= (i6x.Hover.throttle_prev - THROTTLE_CHANGE))
+    {
+      throttle_now = i6x.Hover.throttle_prev - THROTTLE_CHANGE;
+    }
+    else
+      throttle_now = i6x.throttle;
+
+    i6x.throttle = throttle_now;
+    i6x.Hover.throttle_prev = throttle_now;
+
+    /* roll */
+    if (i6x.aileron <= (i6x.Hover.aileron_prev - ROLL_CHANGE))
+    {
+      roll_now = i6x.Hover.aileron_prev - ROLL_CHANGE;
+    }
+    else
+      roll_now = i6x.aileron;
+
+    i6x.aileron = roll_now;
+    i6x.Hover.aileron_prev = roll_now;
+
+    /* pitch */
+    if (i6x.elevator <= (i6x.Hover.elevator_prev - PITCH_CHANGE))
+    {
+      pitch_now = i6x.Hover.elevator_prev - PITCH_CHANGE;
+    }
+    else
+      pitch_now = i6x.elevator;
+
+    i6x.elevator = pitch_now;
+    i6x.Hover.elevator_prev = pitch_now;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -826,6 +934,9 @@ static void Do_ESC_Calibration(void)
    * http://www.instructables.com/id/ESC-Programming-on-Arduino-Hobbyking-ESC/
    * https://www.youtube.com/watch?v=DHDOAocEpqU
    */
+  
+  if (!serial_enabled)
+    Serial.begin(115200);
 
   Serial.println("Start ESC Calibration MODE, Wait!!!");
   
@@ -864,6 +975,11 @@ static void Do_ESC_Calibration(void)
   esc.MotorB_ESC.write(10); 
   esc.MotorC_ESC.write(10); 
   esc.MotorD_ESC.write(10);
-  Serial.println("Finished!!!, Restart Your Arduino");
+  Serial.println("Finished!!! Set Your Throttle to MIN!!! Then Restart Your Arduino");
+
+  while(1)
+  {
+    delay(1000);
+  }
 }
  ////////////////////////////////////////////////////////////////////////////
