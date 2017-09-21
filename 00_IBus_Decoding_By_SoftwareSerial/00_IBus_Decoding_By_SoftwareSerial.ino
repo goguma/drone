@@ -19,15 +19,19 @@
  */
 #include <SoftwareSerial.h>
 #include <Wire.h>
+#include <Servo.h>
 
 #define USE_SOFTWARE_SERIAL 1 // 1: Arduino Uno, 0 : Arduino Pro Micro
 
-#define DEBUG_SERIAL 1
 #define DEBUG_IBUS 0
 #define DEBUG_ACC_GYRO 0
 #define DEBUG_PROCESSING 0
 #define DEBUG_I6X 1
 #define DEBUG_ESC_MOTOR_SPEED 1
+
+#if (DEBUG_IBUS || DEBUG_ACC_GYRO || DEBUG_PROCESSING || DEBUG_I6X || DEBUG_ESC_MOTOR_SPEED)
+  #define DEBUG_SERIAL 1
+#endif
 
 typedef enum _State
 {
@@ -76,6 +80,10 @@ typedef struct _LittleBee_ESC
   float MotorB_Speed;
   float MotorC_Speed;
   float MotorD_Speed;
+  Servo MotorA_ESC;
+  Servo MotorB_ESC;
+  Servo MotorC_ESC;
+  Servo MotorD_ESC;
 }littlebee_esc_20a;
 
 typedef struct _GY86
@@ -129,10 +137,10 @@ typedef struct _PID
   float output;
 }PID;
 
-#define MOTOR_A_PIN 9
-#define MOTOR_B_PIN 6
-#define MOTOR_C_PIN 5
-#define MOTOR_D_PIN 3
+#define MOTOR_A_PIN 9 //top left, CW
+#define MOTOR_B_PIN 6 //top right, CCW
+#define MOTOR_C_PIN 5 //bottom right, CW
+#define MOTOR_D_PIN 3 //bottom left, CCW
 
 #if USE_SOFTWARE_SERIAL
 #define SOFTWARE_SERIAL_RX_PIN 10
@@ -719,11 +727,34 @@ static void Get_DualPID_from_YPR()
 
 static void Get_Motor_Speed_from_PID(void)
 {
+#if 1
+  int angle = 0;
+
+  angle = (i6x.throttle + yaw_pid.output + roll_pid.output + pitch_pid.output);
+  if(angle < 0) angle = 0; 
+  if(angle > 255) angle = 255;
+  esc.MotorA_Speed = (i6x.throttle <= 7) ? 0 : map(angle, 0, 255, 0, 180);
+
+  angle = (i6x.throttle - yaw_pid.output - roll_pid.output + pitch_pid.output);
+  if(angle < 0) angle = 0; 
+  if(angle > 255) angle = 255;
+  esc.MotorB_Speed = (i6x.throttle <= 7) ? 0 : map(angle, 0, 255, 0, 180);
+
+  angle = (i6x.throttle + yaw_pid.output - roll_pid.output - pitch_pid.output);
+  if(angle < 0) angle = 0; 
+  if(angle > 255) angle = 255;
+  esc.MotorC_Speed = (i6x.throttle <= 7) ? 0 : map(angle, 0, 255, 0, 180);
+
+  angle = (i6x.throttle - yaw_pid.output + roll_pid.output - pitch_pid.output);
+  if(angle < 0) angle = 0; 
+  if(angle > 255) angle = 255;
+  esc.MotorD_Speed = (i6x.throttle <= 7) ? 0 : map(angle, 0, 255, 0, 180);
+#else
   esc.MotorA_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle + yaw_pid.output + roll_pid.output + pitch_pid.output);
   esc.MotorB_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle - yaw_pid.output - roll_pid.output + pitch_pid.output);
   esc.MotorC_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle + yaw_pid.output - roll_pid.output - pitch_pid.output);
   esc.MotorD_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle - yaw_pid.output + roll_pid.output - pitch_pid.output);
-    
+
   if(esc.MotorA_Speed < 0) esc.MotorA_Speed = 0; 
   if(esc.MotorA_Speed > 255) esc.MotorA_Speed = 255;
   if(esc.MotorB_Speed < 0) esc.MotorB_Speed = 0; 
@@ -732,6 +763,7 @@ static void Get_Motor_Speed_from_PID(void)
   if(esc.MotorC_Speed > 255) esc.MotorC_Speed = 255;
   if(esc.MotorD_Speed < 0) esc.MotorD_Speed = 0; 
   if(esc.MotorD_Speed > 255) esc.MotorD_Speed = 255;
+#endif
 }
 
 #define THROTTLE_MAX 255
@@ -739,18 +771,46 @@ static void Get_Motor_Speed_from_PID(void)
 
 static void Init_Motor_Speed(void)
 {
+#if 1
+   esc.MotorA_ESC.attach(MOTOR_A_PIN);
+   esc.MotorB_ESC.attach(MOTOR_B_PIN);
+   esc.MotorC_ESC.attach(MOTOR_C_PIN);
+   esc.MotorD_ESC.attach(MOTOR_D_PIN);
+
+   esc.MotorA_ESC.write(0);
+   esc.MotorB_ESC.write(0); 
+   esc.MotorC_ESC.write(0); 
+   esc.MotorD_ESC.write(0); 
+#else
   analogWrite(MOTOR_A_PIN, THROTTLE_MIN);
   analogWrite(MOTOR_B_PIN, THROTTLE_MIN);
   analogWrite(MOTOR_C_PIN, THROTTLE_MIN);
   analogWrite(MOTOR_D_PIN, THROTTLE_MIN);
+#endif
 }
 
 static void Apply_Motor_Speed_To_ESC(void)
-{  
+{
+#if 1
+  esc.MotorA_ESC.write(esc.MotorA_Speed);
+  esc.MotorB_ESC.write(esc.MotorB_Speed); 
+  esc.MotorC_ESC.write(esc.MotorC_Speed); 
+  esc.MotorD_ESC.write(esc.MotorD_Speed); 
+#else
   analogWrite(MOTOR_A_PIN, esc.MotorA_Speed);
   analogWrite(MOTOR_B_PIN, esc.MotorB_Speed);
   analogWrite(MOTOR_C_PIN, esc.MotorC_Speed);
   analogWrite(MOTOR_D_PIN, esc.MotorD_Speed);
+#endif
 }
 
+static void Do_ESC_Calibration(void)
+{
+  /*
+   * http://www.instructables.com/id/How-to-run-an-ESC-with-Arduino/
+   * http://www.instructables.com/id/ESC-Programming-on-Arduino-Hobbyking-ESC/
+   * https://www.youtube.com/watch?v=DHDOAocEpqU
+   */
+
+}
  ////////////////////////////////////////////////////////////////////////////
