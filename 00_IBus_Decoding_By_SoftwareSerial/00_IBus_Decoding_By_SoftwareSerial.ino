@@ -22,12 +22,13 @@
 #include <Servo.h>
 
 #define USE_SOFTWARE_SERIAL 1 // 1: Arduino Uno, 0 : Arduino Pro Micro
+#define USE_WRITE_MICRO_SEC 0 // Use Servo.writeMicroseconds
 
 #define DEBUG_IBUS 0
 #define DEBUG_ACC_GYRO 0
 #define DEBUG_PROCESSING 0
 #define DEBUG_I6X 0
-#define DEBUG_ESC_MOTOR_SPEED 0
+#define DEBUG_ESC_MOTOR_SPEED 1
 #define DEBUG_TARGET_ANGLE 0
 #define DEBUG_HOVERING 0
 
@@ -137,10 +138,10 @@ typedef struct _PID
   float target_angle = 0.0;
   float angle_in;
   float rate_in;
-  float stabilize_kp = 1;
-  float stabilize_ki = 0;
-  float rate_kp = 1;
-  float rate_ki = 0;
+  float stabilize_kp;
+  float stabilize_ki;
+  float rate_kp;
+  float rate_ki;
   float stabilize_iterm;
   float rate_iterm;
   float output;
@@ -156,6 +157,11 @@ typedef struct _PID
 #define SOFTWARE_SERIAL_TX_PIN 11
 SoftwareSerial mySerial(SOFTWARE_SERIAL_RX_PIN, SOFTWARE_SERIAL_TX_PIN); // RX, TX
 #endif
+
+#define STABILIZE_KP (1.0)
+#define STABILIZE_KI (0.0)
+#define RATE_KP (1.0)
+#define RATE_KI (0.0)
 
 FlySkyIBus IBus;
 i6x_Mode2 i6x;
@@ -239,7 +245,7 @@ void loop()
 #if DEBUG_PROCESSING
   static int cnt = 0;
   cnt++;
-  if (cnt%2 == 0)
+  if (cnt%5 == 0)
     SendDataToProcessing();
 
   if (cnt == 1000)
@@ -256,7 +262,13 @@ void loop()
 #endif
 
 #if DEBUG_ESC_MOTOR_SPEED
+static int cnt_motor = 0;
+cnt_motor++;
+if (cnt_motor%5 == 0)
   print_esc_motor_speed();
+
+if (cnt_motor == 1000)
+  cnt_motor = 0;
 #endif
 
 }
@@ -688,16 +700,29 @@ static void Get_i6x_from_IBus(void)
 */
   IBus_loop();
 
-  i6x.aileron = map(IBus.channel[0], 1000, 2000, 0, 250); //roll
-  i6x.elevator = map(IBus.channel[1], 1000, 2000, 0, 250); //pitch
-  i6x.throttle = map(IBus.channel[2], 1000, 2000, 0, 250); //throttle
-  i6x.rudder = map(IBus.channel[3], 1000, 2000, 0, 250); //yaw
-  i6x.VrA = map(IBus.channel[4], 1000, 2000, 0, 250);
-  i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 250);
+#if USE_WRITE_MICRO_SEC
+  i6x.aileron = IBus.channel[0]; //roll
+  i6x.elevator = IBus.channel[1]; //pitch
+  i6x.throttle = IBus.channel[2]; //throttle
+  i6x.rudder = IBus.channel[3]; //yaw
+  i6x.VrA = map(IBus.channel[4], 1000, 2000, 0, 255);
+  i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 255);
   i6x.SWA = map(IBus.channel[6], 1000, 2000, 0, 1);
   i6x.SWB = map(IBus.channel[7], 1000, 2000, 0, 1);
   i6x.SWC = map(IBus.channel[8], 1000, 2000, 0, 2);
   i6x.SWD = map(IBus.channel[9], 1000, 2000, 0, 1);
+#else
+  i6x.aileron = map(IBus.channel[0], 1000, 2000, 0, 255); //roll
+  i6x.elevator = map(IBus.channel[1], 1000, 2000, 0, 255); //pitch
+  i6x.throttle = map(IBus.channel[2], 1000, 2000, 0, 255); //throttle
+  i6x.rudder = map(IBus.channel[3], 1000, 2000, 0, 255); //yaw
+  i6x.VrA = map(IBus.channel[4], 1000, 2000, 0, 255);
+  i6x.VrB = map(IBus.channel[5], 1000, 2000, 0, 255);
+  i6x.SWA = map(IBus.channel[6], 1000, 2000, 0, 1);
+  i6x.SWB = map(IBus.channel[7], 1000, 2000, 0, 1);
+  i6x.SWC = map(IBus.channel[8], 1000, 2000, 0, 2);
+  i6x.SWD = map(IBus.channel[9], 1000, 2000, 0, 1);
+#endif
 
 }
 
@@ -709,9 +734,15 @@ static void Get_Target_Angle_from_i6x(void)
   pitch_pid.target_angle = pitch_pid.base_target_angle;
   yaw_pid.target_angle = yaw_pid.base_target_angle;
 
-  roll_pid.target_angle += i6x.aileron-125;
-  pitch_pid.target_angle +=-(i6x.elevator-125);
-  yaw_pid.target_angle += -(i6x.rudder-125);
+#if USE_WRITE_MICRO_SEC
+  roll_pid.target_angle += i6x.aileron-1500;
+  pitch_pid.target_angle +=-(i6x.elevator-1500);
+  yaw_pid.target_angle += -(i6x.rudder-1500);
+#else
+  roll_pid.target_angle += i6x.aileron-127;
+  pitch_pid.target_angle +=-(i6x.elevator-127);
+  yaw_pid.target_angle += -(i6x.rudder-127);
+#endif
 
 #if DEBUG_TARGET_ANGLE
   print_target_angle();
@@ -773,8 +804,14 @@ static void Get_Target_Angle_from_i6x(void)
 static void Init_DualPID(void)
 {
   roll_pid.target_angle = pitch_pid.target_angle = yaw_pid.target_angle = 0.0;
-  roll_pid.stabilize_kp = pitch_pid.stabilize_kp = yaw_pid.stabilize_kp = 1;
-  roll_pid.rate_kp = pitch_pid.rate_kp = yaw_pid.rate_kp = 1;
+  roll_pid.stabilize_kp = pitch_pid.stabilize_kp = yaw_pid.stabilize_kp = STABILIZE_KP;
+  roll_pid.rate_kp = pitch_pid.rate_kp = yaw_pid.rate_kp = RATE_KP;
+
+  /*
+   * TODO
+   * Receive Input KP, KI from Serial Input in Setup Time
+   */
+
 }
 
 static void GetDualPID(float target_angle, float angle_in, float rate_in,
@@ -850,9 +887,30 @@ static void Get_DualPID_from_YPR()
 
 static void Get_Motor_Speed_from_PID(void)
 {
-#if 1
+
   int angle = 0;
 
+#if USE_WRITE_MICRO_SEC
+  angle = (i6x.throttle + yaw_pid.output + roll_pid.output + pitch_pid.output);
+  if(angle < 1000) angle = 1000; 
+  if(angle > 2000) angle = 2000;
+  esc.MotorA_Speed = (i6x.throttle <= 1050) ? 1000 : angle;
+
+  angle = (i6x.throttle - yaw_pid.output - roll_pid.output + pitch_pid.output);
+  if(angle < 1000) angle = 1000; 
+  if(angle > 2000) angle = 2000;
+  esc.MotorB_Speed = (i6x.throttle <= 1050) ? 1000 : angle;
+
+  angle = (i6x.throttle + yaw_pid.output - roll_pid.output - pitch_pid.output);
+  if(angle < 1000) angle = 1000; 
+  if(angle > 2000) angle = 2000;
+  esc.MotorC_Speed = (i6x.throttle <= 1050) ? 1000 : angle;
+
+  angle = (i6x.throttle - yaw_pid.output + roll_pid.output - pitch_pid.output);
+  if(angle < 1000) angle = 1000; 
+  if(angle > 2000) angle = 2000;
+  esc.MotorD_Speed = (i6x.throttle <= 1050) ? 1000 : angle;
+#else
   angle = (i6x.throttle + yaw_pid.output + roll_pid.output + pitch_pid.output);
   if(angle < 0) angle = 0; 
   if(angle > 255) angle = 255;
@@ -872,59 +930,52 @@ static void Get_Motor_Speed_from_PID(void)
   if(angle < 0) angle = 0; 
   if(angle > 255) angle = 255;
   esc.MotorD_Speed = (i6x.throttle <= 7) ? 0 : map(angle, 0, 255, 0, 180);
-#else
-  esc.MotorA_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle + yaw_pid.output + roll_pid.output + pitch_pid.output);
-  esc.MotorB_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle - yaw_pid.output - roll_pid.output + pitch_pid.output);
-  esc.MotorC_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle + yaw_pid.output - roll_pid.output - pitch_pid.output);
-  esc.MotorD_Speed = (i6x.throttle <= 7) ? 0 : (i6x.throttle - yaw_pid.output + roll_pid.output - pitch_pid.output);
-
-  if(esc.MotorA_Speed < 0) esc.MotorA_Speed = 0; 
-  if(esc.MotorA_Speed > 255) esc.MotorA_Speed = 255;
-  if(esc.MotorB_Speed < 0) esc.MotorB_Speed = 0; 
-  if(esc.MotorB_Speed > 255) esc.MotorB_Speed = 255;
-  if(esc.MotorC_Speed < 0) esc.MotorC_Speed = 0; 
-  if(esc.MotorC_Speed > 255) esc.MotorC_Speed = 255;
-  if(esc.MotorD_Speed < 0) esc.MotorD_Speed = 0; 
-  if(esc.MotorD_Speed > 255) esc.MotorD_Speed = 255;
 #endif
 }
 
-#define THROTTLE_MAX 255
-#define THROTTLE_MIN 0
+#if USE_WRITE_MICRO_SEC
+  #define THROTTLE_MAX 2000
+  #define THROTTLE_MIN 1000
+#else
+  #define THROTTLE_MAX 255
+  #define THROTTLE_MIN 0
+#endif
 
 static void Init_Motor_Speed(void)
 {
-#if 1
-   esc.MotorA_ESC.attach(MOTOR_A_PIN);
-   esc.MotorB_ESC.attach(MOTOR_B_PIN);
-   esc.MotorC_ESC.attach(MOTOR_C_PIN);
-   esc.MotorD_ESC.attach(MOTOR_D_PIN);
+  esc.MotorA_ESC.attach(MOTOR_A_PIN);
+  esc.MotorB_ESC.attach(MOTOR_B_PIN);
+  esc.MotorC_ESC.attach(MOTOR_C_PIN);
+  esc.MotorD_ESC.attach(MOTOR_D_PIN);
 
-   esc.MotorA_ESC.write(0);
-   esc.MotorB_ESC.write(0); 
-   esc.MotorC_ESC.write(0); 
-   esc.MotorD_ESC.write(0); 
+#if USE_WRITE_MICRO_SEC
+  esc.MotorA_ESC.writeMicroseconds(0);
+  esc.MotorB_ESC.writeMicroseconds(0);
+  esc.MotorC_ESC.writeMicroseconds(0);
+  esc.MotorD_ESC.writeMicroseconds(0);
 #else
-  analogWrite(MOTOR_A_PIN, THROTTLE_MIN);
-  analogWrite(MOTOR_B_PIN, THROTTLE_MIN);
-  analogWrite(MOTOR_C_PIN, THROTTLE_MIN);
-  analogWrite(MOTOR_D_PIN, THROTTLE_MIN);
+  esc.MotorA_ESC.write(0);
+  esc.MotorB_ESC.write(0); 
+  esc.MotorC_ESC.write(0); 
+  esc.MotorD_ESC.write(0);
 #endif
 }
 
 static void Apply_Motor_Speed_To_ESC(void)
 {
-#if 1
+
+#if USE_WRITE_MICRO_SEC
+  esc.MotorA_ESC.writeMicroseconds(esc.MotorA_Speed);
+  esc.MotorB_ESC.writeMicroseconds(esc.MotorB_Speed);
+  esc.MotorC_ESC.writeMicroseconds(esc.MotorC_Speed);
+  esc.MotorD_ESC.writeMicroseconds(esc.MotorD_Speed);
+#else
   esc.MotorA_ESC.write(esc.MotorA_Speed);
   esc.MotorB_ESC.write(esc.MotorB_Speed); 
   esc.MotorC_ESC.write(esc.MotorC_Speed); 
-  esc.MotorD_ESC.write(esc.MotorD_Speed); 
-#else
-  analogWrite(MOTOR_A_PIN, esc.MotorA_Speed);
-  analogWrite(MOTOR_B_PIN, esc.MotorB_Speed);
-  analogWrite(MOTOR_C_PIN, esc.MotorC_Speed);
-  analogWrite(MOTOR_D_PIN, esc.MotorD_Speed);
+  esc.MotorD_ESC.write(esc.MotorD_Speed);
 #endif
+
 }
 
 static void Do_ESC_Calibration(void)
@@ -939,42 +990,72 @@ static void Do_ESC_Calibration(void)
     Serial.begin(115200);
 
   Serial.println("Start ESC Calibration MODE, Wait!!!");
-  
+
+
   esc.MotorA_ESC.attach(MOTOR_A_PIN);
   esc.MotorB_ESC.attach(MOTOR_B_PIN);
   esc.MotorC_ESC.attach(MOTOR_C_PIN);
   esc.MotorD_ESC.attach(MOTOR_D_PIN);
+
   delay(5000);
 
   /*HI*/
   Serial.println("MAX throttle, 180 (Servo)!!!");
+#if USE_WRITE_MICRO_SEC
+  esc.MotorA_ESC.writeMicroseconds(THROTTLE_MAX);
+  esc.MotorB_ESC.writeMicroseconds(THROTTLE_MAX);
+  esc.MotorC_ESC.writeMicroseconds(THROTTLE_MAX);
+  esc.MotorD_ESC.writeMicroseconds(THROTTLE_MAX);
+#else
   esc.MotorA_ESC.write(180);
   esc.MotorB_ESC.write(180); 
   esc.MotorC_ESC.write(180); 
   esc.MotorD_ESC.write(180);
+#endif
   delay(5000);
 
   /*LOW*/
   Serial.println("MIN throttle, 0 (Servo)!!!");
+#if USE_WRITE_MICRO_SEC
+  esc.MotorA_ESC.writeMicroseconds(THROTTLE_MIN);
+  esc.MotorB_ESC.writeMicroseconds(THROTTLE_MIN);
+  esc.MotorC_ESC.writeMicroseconds(THROTTLE_MIN);
+  esc.MotorD_ESC.writeMicroseconds(THROTTLE_MIN);
+#else
   esc.MotorA_ESC.write(0);
   esc.MotorB_ESC.write(0); 
   esc.MotorC_ESC.write(0); 
   esc.MotorD_ESC.write(0);
+#endif
   delay(5000);
 
   /*MID*/
   Serial.println("MID throttle, 90 (Servo)!!!");
+#if USE_WRITE_MICRO_SEC
+  esc.MotorA_ESC.writeMicroseconds(1500);
+  esc.MotorB_ESC.writeMicroseconds(1500);
+  esc.MotorC_ESC.writeMicroseconds(1500);
+  esc.MotorD_ESC.writeMicroseconds(1500);
+#else
   esc.MotorA_ESC.write(90);
   esc.MotorB_ESC.write(90); 
   esc.MotorC_ESC.write(90); 
   esc.MotorD_ESC.write(90);
-  delay(10000);
+#endif
+  delay(5000);
 
   /*SPEED*/
+#if USE_WRITE_MICRO_SEC
+  esc.MotorA_ESC.writeMicroseconds(1010);
+  esc.MotorB_ESC.writeMicroseconds(1010);
+  esc.MotorC_ESC.writeMicroseconds(1010);
+  esc.MotorD_ESC.writeMicroseconds(1010);
+#else
   esc.MotorA_ESC.write(10);
   esc.MotorB_ESC.write(10); 
   esc.MotorC_ESC.write(10); 
   esc.MotorD_ESC.write(10);
+#endif
   Serial.println("Finished!!! Set Your Throttle to MIN!!! Then Restart Your Arduino");
 
   while(1)
