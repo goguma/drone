@@ -21,7 +21,7 @@
 #include <Wire.h>
 #include <Servo.h>
 
-#define USE_SOFTWARE_SERIAL 1 // 1: Arduino Uno, 0 : Arduino Pro Micro
+#define USE_SOFTWARE_SERIAL 0 // 1: Arduino Uno, 0 : Arduino Pro Micro
 #define USE_WRITE_MICRO_SEC 0 // Use Servo.writeMicroseconds
 
 #define DEBUG_IBUS 0
@@ -147,10 +147,10 @@ typedef struct _PID
   float output;
 }PID;
 
-#define MOTOR_A_PIN 9 //top left, CW
-#define MOTOR_B_PIN 6 //top right, CCW
-#define MOTOR_C_PIN 5 //bottom right, CW
-#define MOTOR_D_PIN 3 //bottom left, CCW
+#define MOTOR_A_PIN 6 //top left, CW
+#define MOTOR_B_PIN 8 //top right, CCW
+#define MOTOR_C_PIN 9 //bottom right, CW
+#define MOTOR_D_PIN 10 //bottom left, CCW
 
 #if USE_SOFTWARE_SERIAL
 #define SOFTWARE_SERIAL_RX_PIN 10
@@ -603,7 +603,11 @@ static void IBus_begin(void)
 
 static void IBus_loop(void)
 {
+#if USE_SOFTWARE_SERIAL
   while (mySerial.available() > 0)
+#else
+  while (Serial1.available() > 0)
+#endif
   {
     uint32_t now = millis();
     if (now - IBus.last >= PROTOCOL_TIMEGAP)
@@ -611,8 +615,12 @@ static void IBus_loop(void)
       IBus.state = GET_LENGTH;
     }
     IBus.last = now;
-    
+  
+  #if USE_SOFTWARE_SERIAL
     uint8_t v = mySerial.read();
+  #else
+    uint8_t v = Serial1.read();
+  #endif
     switch (IBus.state)
     {
       case GET_LENGTH:
