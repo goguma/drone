@@ -971,19 +971,29 @@ static void Init_Motor_Speed(void)
 
 static void Apply_Motor_Speed_To_ESC(void)
 {
+  /*disarmed if SWD is changed*/
+  if (IBus.channel[9] == 2000)
+  {
+    esc.MotorA_ESC.write(0);
+    esc.MotorB_ESC.write(0); 
+    esc.MotorC_ESC.write(0); 
+    esc.MotorD_ESC.write(0);
+  }
+  else
+  {
 
 #if USE_WRITE_MICRO_SEC
-  esc.MotorA_ESC.writeMicroseconds(esc.MotorA_Speed);
-  esc.MotorB_ESC.writeMicroseconds(esc.MotorB_Speed);
-  esc.MotorC_ESC.writeMicroseconds(esc.MotorC_Speed);
-  esc.MotorD_ESC.writeMicroseconds(esc.MotorD_Speed);
+    esc.MotorA_ESC.writeMicroseconds(esc.MotorA_Speed);
+    esc.MotorB_ESC.writeMicroseconds(esc.MotorB_Speed);
+    esc.MotorC_ESC.writeMicroseconds(esc.MotorC_Speed);
+    esc.MotorD_ESC.writeMicroseconds(esc.MotorD_Speed);
 #else
-  esc.MotorA_ESC.write(esc.MotorA_Speed);
-  esc.MotorB_ESC.write(esc.MotorB_Speed); 
-  esc.MotorC_ESC.write(esc.MotorC_Speed); 
-  esc.MotorD_ESC.write(esc.MotorD_Speed);
+    esc.MotorA_ESC.write(esc.MotorA_Speed);
+    esc.MotorB_ESC.write(esc.MotorB_Speed); 
+    esc.MotorC_ESC.write(esc.MotorC_Speed); 
+    esc.MotorD_ESC.write(esc.MotorD_Speed);
 #endif
-
+  }
 }
 
 static void Do_ESC_Calibration(void)
@@ -1059,10 +1069,10 @@ static void Do_ESC_Calibration(void)
   esc.MotorC_ESC.writeMicroseconds(1010);
   esc.MotorD_ESC.writeMicroseconds(1010);
 #else
-  esc.MotorA_ESC.write(10);
-  esc.MotorB_ESC.write(10); 
-  esc.MotorC_ESC.write(10); 
-  esc.MotorD_ESC.write(10);
+  esc.MotorA_ESC.write(20);
+  esc.MotorB_ESC.write(20); 
+  esc.MotorC_ESC.write(20); 
+  esc.MotorD_ESC.write(20);
 #endif
   Serial.println("Finished!!! Set Your Throttle to MIN!!! Then Restart Your Arduino");
 
